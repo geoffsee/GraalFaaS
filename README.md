@@ -1,87 +1,106 @@
 # GraalFaaS
 
-A minimal polyglot Function‑as‑a‑Service (FaaS) built on top of GraalVM's Polyglot API.
+```shell
+no shame
+```
 
-This repository demonstrates how to embed GraalVM languages and execute user functions in a sandboxed context.
-Currently supported guest language(s):
-- JavaScript (GraalJS).
-- Python (GraalPython).
+A minimal polyglot Function‑as‑a‑Service (FaaS) built on GraalVM’s Polyglot API. It demonstrates how to embed GraalVM languages and execute user functions in an isolated context from a Kotlin host.
 
-You are “done” when each supported language has at least one example function that runs successfully. This repo ships with a working JavaScript example and a unit test that executes it end‑to‑end.
+Supported guest languages:
+- JavaScript (GraalJS)
+- Python (GraalPython)
 
-## Prerequisites
-- JDK (Gradle Toolchains will auto‑provision the right JDK).
-- Internet access for Gradle to download dependencies from Maven Central.
-- You do NOT need to install GraalVM separately: the build depends on the Graal Polyglot SDK and GraalJS engine artifacts from Maven Central.
 
-## Run the demo
-- Run `./gradlew run` to build and run the application. You should see output similar to:
+## Quick start
+Prerequisites:
+- Internet access for Gradle to resolve dependencies from Maven Central.
+- You do NOT need a local GraalVM installation. You also don’t need a local JDK 21; Gradle Toolchains will provision it automatically.
 
+Run the demo:
+- `./gradlew run`
+
+You should see output like:
 ```
 --- GraalFaaS Demo ---
 JavaScript handler result: {message=Hello, World!}
 ```
 
-The demo invokes the JavaScript function defined in `app/src/main/resources/functions/js/hello.js`:
-
+The demo invokes the JavaScript function at `app/src/main/resources/functions/js/hello.js`:
 ```javascript
 function handler(event) {
   return { message: `Hello, ${event.name}!` };
 }
 ```
 
-## Run tests
-- Run `./gradlew check` to run all checks, including the polyglot test `PolyglotFaasTest` that executes the JavaScript handler with an input and asserts the response.
 
-## Project layout
-- `app/` – the FaaS host and examples
-  - `src/main/kotlin/Faas.kt` – Polyglot invoker that evaluates source and calls a named function with an event object.
-  - `src/main/kotlin/App.kt` – CLI demo that invokes the JavaScript example.
-  - `src/main/resources/functions/js/hello.js` – JavaScript example function.
-  - `src/test/kotlin/PolyglotFaasTest.kt` – test that verifies the example runs successfully.
-- `utils/` – a small utility module (used by the original template; not required by the FaaS logic).
+## Testing
+- All tests: `./gradlew check` or `./gradlew :app:test`
+- One test class: `./gradlew :app:test --tests "ltd.gsio.app.PolyglotFaasTest"`
+- One test method: `./gradlew :app:test --tests "ltd.gsio.app.PolyglotFaasTest.javascript ES module handler returns greeting"`
 
-## Adding more languages
-The FaaS is language‑agnostic: pass `languageId` (e.g., `js`) and the function source. To add a new language:
-1. Add the language engine dependency in `gradle/libs.versions.toml` and in `app/build.gradle.kts`.
-   - Example for JavaScript already added: `org.graalvm.js:js` (version aligned via `graalvm` in the version catalog).
-2. Provide a sample function file under `app/src/main/resources/functions/<lang>/...` that exports a `handler(event)` function.
-3. Invoke it via `PolyglotFaaS.invoke()` from code or tests, and add a unit test asserting the expected result.
+Tip: Use println/System.out.println in tests for ad‑hoc debugging. Gradle is configured to show PASSED/FAILED/SKIPPED events.
 
-Refer to GraalVM embedding docs for language IDs and options: https://www.graalvm.org/latest/reference-manual/embed-languages
 
-## Build basics
-This project uses [Gradle](https://gradle.org/).
+## Using the FaaS from Kotlin
+PolyglotFaaS constructs a fresh Graal Context per invocation and calls a named function with an event object.
 
-Common commands:
-- `./gradlew run` – build and run the CLI demo.
-- `./gradlew build` – build everything.
-- `./gradlew check` – run tests.
-- `./gradlew clean` – clean build outputs.
+Basic JavaScript example:
+```kotlin
+val jsSource = loadResource("/functions/js/hello.js")
+val result = PolyglotFaaS.invoke(
+    PolyglotFaaS.InvocationRequest(
+        languageId = "js",
+        sourceCode = jsSource,
+        functionName = "handler",
+        event = mapOf("name" to "World")
+    )
+)
+// result is a Map: {message=Hello, World!}
+```
 
-Notes:
-- The build uses a version catalog (see `gradle/libs.versions.toml`) and a shared convention plugin in `buildSrc`.
-- Repositories are configured to Maven Central via `settings.gradle.kts`.
+Python example:
+```python
+# app/src/main/resources/functions/py/hello.py
 
-## Using dependencies in guest code (JavaScript)
-PolyglotFaaS supports simple in-memory module dependencies for JavaScript. Provide a map of moduleName -> source in InvocationRequest.dependencies. A lightweight CommonJS-style `require(name)` will be injected so your handler can import those modules.
+def handler(event):
+    name = event.get("name", "World")
+    return f"Hello, {name}!"
+```
+```kotlin
+val pySource = loadResource("/functions/py/hello.py")
+val pyResult = PolyglotFaaS.invoke(
+    PolyglotFaaS.InvocationRequest(
+        languageId = "python",
+        sourceCode = pySource,
+        functionName = "handler",
+        event = mapOf("name" to "PyUser")
+    )
+)
+// pyResult is a String: "Hello, PyUser!"
+```
 
-Example:
+Notes about Python:
+- The host auto‑creates a Python trampoline `__faas_invoke__` so your `handler(event)` can be called without passing host objects into Python.
+- Results are converted back to host types: primitives/strings; dicts→Map; lists→List; other objects→string fallback.
 
-- Dependency module (app/src/main/resources/functions/js/lib/greeter.js):
+
+## JavaScript dependencies (CommonJS‑style in‑memory modules)
+You can supply in‑memory module sources and `require(name)` them from your handler.
+
+Dependency module (app/src/main/resources/functions/js/lib/greeter.js):
 ```javascript
 module.exports = {
   greet: function(name) { return `Hello, ${name}!`; }
 };
 ```
 
-- Handler using the dependency (app/src/main/resources/functions/js/hello-dep.js):
+Handler using the dependency (app/src/main/resources/functions/js/hello-dep.js):
 ```javascript
 const { greet } = require('greeter');
 function handler(event) { return { message: greet(event.name) }; }
 ```
 
-- Host invocation:
+Host invocation:
 ```kotlin
 val main = loadResource("/functions/js/hello-dep.js")
 val dep = loadResource("/functions/js/lib/greeter.js")
@@ -95,12 +114,13 @@ val result = PolyglotFaaS.invoke(
 )
 ```
 
-Notes:
-- This loader only resolves modules from the provided in-memory map; there is no network or filesystem access.
-- Module format is CommonJS: each module gets `(exports, module, require)` and should assign to `module.exports` or `exports`.
+Important:
+- The loader only resolves modules from the provided in‑memory map; there is no filesystem or network access.
+- Modules use a CommonJS shape: each module receives `(exports, module, require)` and should set `module.exports` or `exports`.
 
-## Using ES modules (JavaScript)
-PolyglotFaaS can evaluate your handler as an ES module. Export a function named `handler(event)` from your module and set `jsEvalAsModule = true` in the invocation request.
+
+## JavaScript ES modules
+You can evaluate your handler as an ES module. Export a named `handler(event)` and set `jsEvalAsModule = true`.
 
 Example module (app/src/main/resources/functions/js/hello-esm.mjs):
 ```javascript
@@ -123,5 +143,47 @@ val result = PolyglotFaaS.invoke(
 ```
 
 Notes:
-- The ES module is evaluated with GraalJS' module semantics and its namespace is used to resolve the exported `handler`.
-- Current in-memory dependency support is CommonJS-only (via `require(name)`). Importing other ES modules with `import` specifiers is not yet supported by this minimal loader.
+- The module is evaluated with GraalJS module semantics; the module namespace is used to resolve the exported `handler`.
+- In‑memory dependency support is currently CommonJS‑only via `require(name)`; `import` of other ES modules isn’t wired by this minimal loader.
+
+
+## Project layout
+- `app/` – FaaS host and examples
+  - `src/main/kotlin/Faas.kt` – Polyglot invoker and marshalling logic
+  - `src/main/kotlin/App.kt` – CLI demo entrypoint
+  - `src/main/resources/functions/js/...` – JavaScript examples
+  - `src/main/resources/functions/py/...` – Python examples
+  - `src/test/kotlin/PolyglotFaasTest.kt` – polyglot unit tests
+  - `src/test/kotlin/AppIntegrationTest.kt` – CLI demo integration test
+- `utils/` – small utility module (not required by FaaS logic)
+
+
+## Build basics and tooling
+This is a Gradle multi‑project build. Key points:
+- JDK 21 toolchain is enforced by the convention plugin (`buildSrc/src/main/kotlin/kotlin-jvm.gradle.kts → jvmToolchain(21)`).
+- GraalVM engines come from Maven Central via the version catalog (`gradle/libs.versions.toml`):
+  - org.graalvm.polyglot:polyglot
+  - org.graalvm.js:js
+  - org.graalvm.python:python
+- The `:app` module depends on these via `implementation(libs.polyglot/js/python)`.
+
+Common commands:
+- `./gradlew run` – build and run the CLI demo
+- `./gradlew build` – full build
+- `./gradlew check` – run tests
+- `./gradlew clean` – clean outputs
+
+Reference: GraalVM embedding docs https://www.graalvm.org/latest/reference-manual/embed-languages
+
+
+## Security note
+For simplicity, the demo enables `allowAllAccess(true)` on the Graal context. For a hardened environment you should:
+- Disable broad host access and selectively expose only what’s needed.
+- Avoid injecting `require` unless you need in‑memory deps; it only resolves the provided map and cannot access the filesystem.
+- Curate per‑language options carefully.
+
+
+## Troubleshooting
+- Gradle can’t find a JDK: Let Gradle Toolchains download one (no local JDK 21 required). Ensure internet access on first run.
+- Classpath/engine mismatch: Keep the GraalVM artifacts aligned via the single `graalvm` version in `gradle/libs.versions.toml`.
+- Tests can’t find resources: Ensure paths start with `/functions/...` and use `getResourceAsStream` with UTF‑8 decoding as in the tests.
