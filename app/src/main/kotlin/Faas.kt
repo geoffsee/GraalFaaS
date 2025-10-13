@@ -25,17 +25,68 @@ object PolyglotFaaS {
         // For JavaScript, these can be required via require('<moduleName>').
         val dependencies: Map<String, String> = emptyMap(),
         // JavaScript: Evaluate source as an ES module instead of a classic script.
-        val jsEvalAsModule: Boolean = false
+        val jsEvalAsModule: Boolean = false,
+        // Host-side timeout for this invocation in milliseconds. Null or <= 0 means no timeout.
+        val timeoutMillis: Long? = null
     )
 
     class FunctionNotFoundException(languageId: String, functionName: String) :
         RuntimeException("Function '$functionName' not found or not executable in language '$languageId'.")
 
+    class InvocationTimeoutException(timeoutMillis: Long) :
+        RuntimeException("Invocation timed out after ${timeoutMillis}ms")
+
     /**
-     * Invoke a guest function within a fresh polyglot context.
-     * The context is created per invocation for isolation; for high-throughput scenarios, consider pooling/compilation.
+     * Short-lived worker pool for executing invocations with timeouts.
+     * Uses a SynchronousQueue with 0 core threads and allows threads to time out so idle workers are recycled.
      */
-    fun invoke(request: InvocationRequest): Any? =
+    private object WorkerPool {
+        private val maxThreads: Int = (Runtime.getRuntime().availableProcessors()).coerceAtLeast(2)
+        private val threadFactory = java.util.concurrent.ThreadFactory { r ->
+            val t = Thread(r, "faas-worker-${'$'}{WORKER_ID.incrementAndGet()}")
+            t.isDaemon = true
+            t
+        }
+        private val WORKER_ID = java.util.concurrent.atomic.AtomicInteger(0)
+        val executor: java.util.concurrent.ThreadPoolExecutor = java.util.concurrent.ThreadPoolExecutor(
+            0,
+            maxThreads,
+            30L, java.util.concurrent.TimeUnit.SECONDS,
+            java.util.concurrent.SynchronousQueue(),
+            threadFactory
+        ).apply {
+            allowCoreThreadTimeOut(true)
+        }
+    }
+
+    /**
+     * Invoke a guest function inside a worker thread with an optional timeout.
+     * A fresh polyglot Context is still created per task for isolation.
+     */
+    fun invoke(request: InvocationRequest): Any? {
+        val task = java.util.concurrent.Callable { doInvoke(request) }
+        val future = WorkerPool.executor.submit(task)
+        val timeout = request.timeoutMillis ?: 0L
+        return try {
+            if (timeout > 0) future.get(timeout, java.util.concurrent.TimeUnit.MILLISECONDS) else future.get()
+        } catch (e: java.util.concurrent.TimeoutException) {
+            future.cancel(true)
+            throw InvocationTimeoutException(timeout)
+        } catch (e: java.lang.InterruptedException) {
+            future.cancel(true)
+            Thread.currentThread().interrupt()
+            throw e
+        } catch (e: java.util.concurrent.ExecutionException) {
+            // Unwrap the cause for cleaner error propagation
+            val cause = e.cause
+            if (cause is RuntimeException) throw cause
+            if (cause != null) throw RuntimeException(cause)
+            throw e
+        }
+    }
+
+    // Actual invocation logic (unchanged) executed within a worker
+    private fun doInvoke(request: InvocationRequest): Any? =
         Context.newBuilder(request.languageId)
             .allowAllAccess(true)
             .option("engine.WarnInterpreterOnly", "false") // reduce noise if JIT unavailable

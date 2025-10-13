@@ -20,7 +20,8 @@ fun main(args: Array<String>) {
                 languageId = "js",
                 sourceCode = jsSource,
                 functionName = "handler",
-                event = mapOf("name" to "World")
+                event = mapOf("name" to "World"),
+                timeoutMillis = 5_000
             )
         )
         println("JavaScript handler result: $result")
@@ -127,7 +128,8 @@ private fun startServer(port: Int) {
                     functionName = asset.functionName,
                     event = event,
                     dependencies = asset.dependencies,
-                    jsEvalAsModule = asset.jsEvalAsModule
+                    jsEvalAsModule = asset.jsEvalAsModule,
+                    timeoutMillis = 5_000
                 )
             )
             sendJson(exchange, 200, result)
