@@ -1,12 +1,7 @@
 package ltd.gsio.app
 
-import com.fasterxml.jackson.annotation.JsonInclude
-import com.fasterxml.jackson.core.JsonFactoryBuilder
-import com.fasterxml.jackson.core.json.JsonReadFeature
-import com.fasterxml.jackson.databind.DeserializationFeature
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.kotlin.KotlinModule
-import com.fasterxml.jackson.module.kotlin.readValue
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
@@ -44,17 +39,9 @@ object Assets {
         val file: String? = null
     )
 
-    private val jsonFactory = JsonFactoryBuilder()
-        .configure(JsonReadFeature.ALLOW_JAVA_COMMENTS, true)
-        .configure(JsonReadFeature.ALLOW_YAML_COMMENTS, true)
-        .configure(JsonReadFeature.ALLOW_TRAILING_COMMA, true)
-        .configure(JsonReadFeature.ALLOW_SINGLE_QUOTES, true)
-        .build()
-
-    val mapper: ObjectMapper = ObjectMapper(jsonFactory)
-        .registerModule(KotlinModule.Builder().build())
-        .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-        .setSerializationInclusion(JsonInclude.Include.NON_NULL)
+    val gson: Gson = GsonBuilder()
+        .setPrettyPrinting()
+        .create()
 
     private fun baseDir(): Path = Path.of(".faas", "functions")
 
@@ -66,14 +53,16 @@ object Assets {
 
     fun save(asset: FunctionAsset) {
         ensureDirs()
-        val bytes = mapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(asset)
-        Files.write(assetPath(asset.id), bytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
+        val json = gson.toJson(asset)
+        Files.writeString(assetPath(asset.id), json, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
     }
 
     fun load(id: String): FunctionAsset? {
         val p = assetPath(id)
         return if (Files.exists(p)) {
-            Files.newInputStream(p).use { mapper.readValue(it) }
+            Files.newBufferedReader(p).use { reader ->
+                gson.fromJson(reader, FunctionAsset::class.java)
+            }
         } else null
     }
 
@@ -82,7 +71,11 @@ object Assets {
         if (!dir.exists()) return emptyList()
         return dir.listFiles { f: File -> f.isFile && f.name.endsWith(".json") }
             ?.mapNotNull { f ->
-                try { f.inputStream().use { mapper.readValue<FunctionAsset>(it) } } catch (_: Exception) { null }
+                try {
+                    f.bufferedReader().use { reader ->
+                        gson.fromJson(reader, FunctionAsset::class.java)
+                    }
+                } catch (_: Exception) { null }
             }
             ?: emptyList()
     }
@@ -110,7 +103,9 @@ object Assets {
     }
 
     fun readManifest(file: Path): UploadManifest {
-        return Files.newInputStream(file).use { mapper.readValue(it) }
+        return Files.newBufferedReader(file).use { reader ->
+            gson.fromJson(reader, UploadManifest::class.java)
+        }
     }
 
     private fun readFile(path: Path): String = Files.readString(path)

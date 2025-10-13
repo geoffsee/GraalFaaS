@@ -118,7 +118,8 @@ private fun startServer(port: Int) {
                 emptyMap()
             } else {
                 try {
-                    Assets.mapper.readValue(body, Assets.mapper.typeFactory.constructMapType(Map::class.java, String::class.java, Any::class.java))
+                    @Suppress("UNCHECKED_CAST")
+                    Assets.gson.fromJson(body, Map::class.java) as Map<String, Any?>
                 } catch (_: Exception) { emptyMap() }
             }
             val result = PolyglotFaaS.invoke(
@@ -144,7 +145,8 @@ private fun startServer(port: Int) {
 }
 
 private fun sendJson(exchange: HttpExchange, status: Int, body: Any?) {
-    val bytes = Assets.mapper.writeValueAsBytes(body)
+    val json = Assets.gson.toJson(body)
+    val bytes = json.toByteArray(StandardCharsets.UTF_8)
     exchange.responseHeaders.add("Content-Type", "application/json; charset=utf-8")
     exchange.sendResponseHeaders(status, bytes.size.toLong())
     exchange.responseBody.use { it.write(bytes) }

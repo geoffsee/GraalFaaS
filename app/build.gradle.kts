@@ -19,9 +19,8 @@ dependencies {
     implementation(libs.js)
     implementation(libs.python)
 
-    // JSON parsing/serialization (JSON + JSONC via Jackson with comments enabled)
-    implementation(libs.jacksonDatabind)
-    implementation(libs.jacksonKotlin)
+    // JSON parsing/serialization via Gson
+    implementation(libs.gson)
 
     testImplementation(kotlin("test"))
 }

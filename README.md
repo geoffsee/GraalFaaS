@@ -1,10 +1,13 @@
 # GraalFaaS
 
+[![Tests](https://github.com/geoffsee/GraalFaaS/actions/workflows/test.yml/badge.svg)](https://github.com/geoffsee/GraalFaaS/actions/workflows/test.yml)
+[![Docker](https://img.shields.io/badge/docker-ghcr.io-blue)](https://github.com/geoffsee/GraalFaaS/pkgs/container/graalfaas)
+
 ```shell
 no shame
 ```
 
-A minimal polyglot Function‑as‑a‑Service (FaaS) built on GraalVM’s Polyglot API. It demonstrates how to embed GraalVM languages and execute user functions in an isolated context from a Kotlin host.
+A minimal polyglot Function‑as‑a‑Service (FaaS) built on GraalVM's Polyglot API. It demonstrates how to embed GraalVM languages and execute user functions in an isolated context from a Kotlin host.
 
 Supported guest languages:
 - JavaScript (GraalJS)
