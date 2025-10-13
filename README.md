@@ -14,10 +14,12 @@ Supported guest languages:
 ## Quick start
 Prerequisites:
 - Internet access for Gradle to resolve dependencies from Maven Central.
-- You do NOT need a local GraalVM installation. You also don’t need a local JDK 21; Gradle Toolchains will provision it automatically.
+- You do NOT need a local GraalVM installation. You also don't need a local JDK 21; Gradle Toolchains will provision it automatically.
 
-Run the demo:
-- `./gradlew run`
+### Run the demo
+```bash
+./gradlew run
+```
 
 You should see output like:
 ```
@@ -30,6 +32,73 @@ The demo invokes the JavaScript function at `app/src/main/resources/functions/js
 function handler(event) {
   return { message: `Hello, ${event.name}!` };
 }
+```
+
+### Start the HTTP server
+```bash
+./gradlew run --args="serve --port 8080"
+```
+
+The server exposes:
+- `GET /health` - health check endpoint
+- `POST /invoke/{id}` - invoke a function by ID
+
+### Upload functions
+Create a manifest file (JSON or JSONC):
+```jsonc
+// my-function.jsonc
+{
+  "id": "my-func",               // required: unique function ID
+  "languageId": "js",            // required: "js" or "python"
+  "functionName": "handler",     // optional: defaults to "handler"
+  "jsEvalAsModule": false,       // optional: JS ES modules (default: false)
+  "sourceFile": "my-function.js" // required: path to source file
+                                 // OR use "source": "inline code here"
+}
+```
+
+For functions with dependencies:
+```jsonc
+{
+  "id": "my-func-with-deps",
+  "languageId": "js",
+  "sourceFile": "handler.js",
+  "dependencies": {
+    "greeter": { "file": "lib/greeter.js" },
+    "utils": { "source": "module.exports = { add: (a,b) => a+b };" }
+  }
+}
+```
+
+Upload it:
+```bash
+./gradlew run --args="upload my-function.jsonc"
+```
+
+Functions are stored in `.faas/functions/{id}.json`
+
+List uploaded functions:
+```bash
+./gradlew run --args="list"
+```
+
+Invoke via HTTP:
+```bash
+curl -X POST http://localhost:8080/invoke/my-func \
+  -H "Content-Type: application/json" \
+  -d '{"name": "World"}'
+```
+
+## Use Docker
+```shell
+docker run -p 8080:8080 ghcr.io/geoffsee/graalfaas:latest
+```
+
+The container automatically starts the HTTP server on port 8080.
+
+To persist uploaded functions, mount a volume:
+```shell
+docker run -p 8080:8080 -v $(pwd)/.faas:/app/.faas ghcr.io/geoffsee/graalfaas:latest
 ```
 
 
@@ -271,6 +340,24 @@ val result = try {
 Notes:
 - Timeouts are best-effort interruption; the guest engine typically honors interrupts, but code that ignores interruption may take a moment to unwind. The Context for that invocation is confined to the worker and is not reused.
 - This is an in-process pool. For stronger isolation, use a process-based worker model as discussed in the Security section.
+
+### CLI commands
+The app supports multiple modes via command-line arguments:
+
+```bash
+# Run demo (no arguments)
+./gradlew run
+
+# Upload a function from a manifest file
+./gradlew run --args="upload <manifest.jsonc>"
+
+# Start HTTP server (default port 8080)
+./gradlew run --args="serve"
+./gradlew run --args="serve --port 9090"
+
+# List all uploaded functions
+./gradlew run --args="list"
+```
 
 ### CLI demo and HTTP server defaults
 - The CLI demo (App.kt) uses a default timeout of 5s when invoking the bundled JavaScript handler.
