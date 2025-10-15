@@ -126,6 +126,23 @@ object PolyglotFaaS {
                         .build()
                     ctx.eval(src)
                 } else {
+                    // Preload Python dependencies as in-memory modules, if provided
+                    if (request.languageId == "python" && request.dependencies.isNotEmpty()) {
+                        for ((modName, modSrc) in request.dependencies) {
+                            val nameEsc = escapePy(modName)
+                            val srcEsc = escapePy(modSrc)
+                            ctx.eval(
+                                "python",
+                                (
+                                    "import types, sys\n" +
+                                        "_mod = types.ModuleType('" + nameEsc + "')\n" +
+                                        "_src = '" + srcEsc + "'\n" +
+                                        "exec(_src, _mod.__dict__)\n" +
+                                        "sys.modules['" + nameEsc + "'] = _mod\n"
+                                )
+                            )
+                        }
+                    }
                     ctx.eval(request.languageId, request.sourceCode)
                     // For Python, prepare a zero-arg trampoline exported to polyglot bindings
                     if (request.languageId == "python") {

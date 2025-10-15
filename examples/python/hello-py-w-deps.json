@@ -1,0 +1,9 @@
+{
+  "id": "python-w-deps",
+  "languageId": "python",
+  "functionName": "handler",
+  "sourceFile": "examples/python/handler-w-deps.py",
+  "dependencies": {
+    "greeter": { "file": "examples/python/greeter.py" }
+  }
+}

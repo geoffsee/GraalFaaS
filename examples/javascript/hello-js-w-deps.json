@@ -1,0 +1,10 @@
+{
+  "id": "javascript-w-deps",
+  "languageId": "js",
+  "functionName": "handler",
+  "jsEvalAsModule": false,
+  "sourceFile": "examples/javascript/handler-w-deps.js",
+  "dependencies": {
+    "greeter": { "file": "examples/javascript/greeter.js" }
+  }
+}
