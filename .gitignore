@@ -43,3 +43,27 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+
+app/.faas/
+billing.out
+billing2.out
+billing_free.out
+invoke.out
+invoke_acme.out
+list.out
+list_acme.out
+list_acme2.out
+rpm_result.out
+server.log
+server2.log
+server3.log
+server4.log
+server5.log
+server6.log
+server7.log
+upload.out
+upload_acme.out
+usage.out
+usage_after_fix.out
+usage_dev.out
+web/
