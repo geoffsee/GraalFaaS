@@ -395,3 +395,36 @@ flowchart LR
   App --> CLI
   App --> HTTP
 ```
+
+## What's next
+
+If you just cloned the repo and ran the demo, here are a few next steps you can take right away:
+
+- Run the CLI demo again to verify your environment:
+  - ./gradlew run
+- Start the HTTP server and invoke functions over HTTP:
+  - ./gradlew run --args="serve --port 8080"
+  - See: Start the HTTP server
+- Upload your first function from a JSON/JSONC manifest:
+  - Create a manifest (see: Upload functions)
+  - ./gradlew run --args="upload my-function.jsonc"
+  - List what’s stored: ./gradlew run --args="list"
+- Try JavaScript flavors:
+  - CommonJS-style in-memory dependencies via require(name) (see: JavaScript dependencies)
+  - ES modules with jsEvalAsModule = true (see: JavaScript ES modules)
+- Add or tweak a Python handler:
+  - See app/src/main/resources/functions/py/hello.py
+  - Run just the python test method:
+    - ./gradlew :app:test --tests "ltd.gsio.app.PolyglotFaasTest.python hello handler returns greeting"
+- Harden the sandbox for less-permissive execution:
+  - See: Security model and isolation
+  - Toggle allowAllAccess(false) and related options in app/src/main/kotlin/Faas.kt
+- Run and iterate with tests:
+  - All tests: ./gradlew check
+  - One class: ./gradlew :app:test --tests "ltd.gsio.app.PolyglotFaasTest"
+  - One method: ./gradlew :app:test --tests "ltd.gsio.app.PolyglotFaasTest.javascript ES module handler returns greeting"
+- Run in Docker (no local JDK/GraalVM needed):
+  - docker run -p 8080:8080 ghcr.io/geoffsee/graalfaas:latest
+  - Persist uploads: -v $(pwd)/.faas:/app/.faas
+
+Tip: The Project layout section points to the key files if you want to jump straight into the host code (Faas.kt) or the sample functions.

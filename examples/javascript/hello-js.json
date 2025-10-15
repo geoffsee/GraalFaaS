@@ -1,0 +1,7 @@
+{
+  "id": "hello-js-example",
+  "languageId": "js",
+  "functionName": "handler",
+  "jsEvalAsModule": false,
+  "sourceFile": "examples/javascript/handler.js"
+}

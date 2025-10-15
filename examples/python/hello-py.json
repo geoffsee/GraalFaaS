@@ -1,0 +1,6 @@
+{
+  "id": "hello-py-example",
+  "languageId": "python",
+  "functionName": "handler",
+  "sourceFile": "examples/python/handler.py"
+}
