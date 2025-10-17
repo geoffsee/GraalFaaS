@@ -3,21 +3,43 @@
 [![Tests](https://github.com/geoffsee/GraalFaaS/actions/workflows/test.yml/badge.svg)](https://github.com/geoffsee/GraalFaaS/actions/workflows/test.yml)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io-blue)](https://github.com/geoffsee/GraalFaaS/pkgs/container/graalfaas)
 
-```shell
-no shame
-```
-
 A minimal polyglot Function‑as‑a‑Service (FaaS) built on GraalVM's Polyglot API. It demonstrates how to embed GraalVM languages and execute user functions in an isolated context from a Kotlin host.
 
 Supported guest languages:
 - JavaScript (GraalJS)
 - Python (GraalPython)
 
+## Prelude
+The GraalVM project stands as a remarkable gift and catalyst, enabling seamless interoperability among modern JVM languages like Kotlin and Scala while unlocking the power accumulated over 30 years of Java’s rich ecosystem. 
+As Java marks three decades as a shared encoding of human problem-solving, Kotlin and Scala harness this legacy by targeting the JVM runtime, allowing developers to combine expressive modern language features with the mature robustness of Java’s libraries and tooling. 
+This synergy not only elevates software development across diverse domains but also exemplifies how collaborative technological evolution transforms complex challenges into elegant solutions.
+
+## Use cases
+- PaaS (Platform-as-a-Service) primitive - Compose a complex system as a manifest of functions (not implemented, but should work)
+- Allowing an AI system to execute code safely in isolation. (the inspiring use-case)
+- Embedding user-defined functions in a Kotlin/JVM service without running a separate GraalVM distribution.
+- On-prem or edge "serverless" style execution where functions are uploaded and invoked via HTTP.
+- Safe(ish) execution of customer extensions, formulas, or webhooks with per-invocation timeouts and a fresh context per call.
+- Data/ETL transformations using JavaScript or Python snippets executed close to the data path.
+- Prototyping polyglot plugins for a larger application (JS/Python today; other engines can be added via Gradle).
+- Educational reference for embedding GraalVM languages and marshaling values between guest and host.
+
 
 ## Quick start
 Prerequisites:
 - Internet access for Gradle to resolve dependencies from Maven Central.
 - You do NOT need a local GraalVM installation. You also don't need a local JDK 21; Gradle Toolchains will provision it automatically.
+
+## Limitations
+- Storage exists as an in-memory construct, nothing is persisted.
+- Networking is disabled in the isolates at runtime.
+
+## Way Forward
+Please understand, this was a random idea that happened to blossom. I track with Github issues in this repository as items present.
+There are so many directions this could go. As such, I plan to keep the implementation as unopinionated as possible to 
+ensure maximum compatibility with known use-cases.
+
+
 
 ### Run the demo
 ```bash
@@ -251,65 +273,7 @@ Reference: GraalVM embedding docs https://www.graalvm.org/latest/reference-manua
 ## Security model and isolation
 GraalVM isolates are not OS processes; they are VM-level sandboxes that share the host process. A severe memory-corruption bug or a JNI/native escape in one isolate can compromise the entire process. Treat the current setup as a demo, not a hardened multi-tenant runtime.
 
-Where this repo sets the policy:
-- app/src/main/kotlin/Faas.kt → Context.newBuilder(...).allowAllAccess(true) and the in-memory CommonJS `require` for JS.
-
-Mitigation options, from lightest to strongest:
-
-1) Harden in-process execution (low overhead)
-- Turn off blanket access: prefer `allowAllAccess(false)`. Configure:
-  - `allowHostAccess(HostAccess.NONE)`
-  - `allowHostClassLookup { false }`
-  - `allowNativeAccess(false)`
-  - `allowCreateThread(false)` if handlers do not need to spawn threads
-  - avoid exposing `polyglotBindings` and host objects
-- Keep data-only boundaries: pass only primitive/Map/List data into the context; don’t pass live host objects.
-- Remove the injected `require` unless you need it; if you keep it, resolve only from the provided in-memory map.
-- Apply resource limits:
-  - Use `org.graalvm.polyglot.ResourceLimits` to set a time/statement budget and cancel on overrun.
-  - Impose host-side timeouts and cancel/close the context on timeout.
-  - Bound JVM memory with `-Xmx`; note per-isolate memory caps are not available inside one process.
-- Per-language tightening:
-  - JavaScript: deny host access and class lookups; avoid exposing Java.* globals; prefer module code that doesn’t depend on host interop.
-  - Python: keep the trampoline pattern used here and avoid exposing host objects or polyglot types directly.
-
-2) Process/container isolation (strong)
-- Run untrusted code in a separate worker process (a dedicated JVM or a native-image binary) and communicate via stdin/stdout, HTTP, or gRPC. Crash/restart isolates the blast radius.
-- Use a short-lived worker pool with per-invocation timeouts and automatic recycling.
-- Apply OS/container sandboxing:
-  - Run as an unprivileged user inside a container or dedicated cgroup namespace.
-  - Cap CPU/memory/pids with cgroups; set `no_new_privs`; mount read-only file systems; drop Linux capabilities; restrict network if not needed.
-  - Enable seccomp/AppArmor/SELinux profiles.
-
-3) MicroVM or syscall sandboxes (very strong)
-- For high-assurance isolation, consider Firecracker/Kata/gVisor around the worker process. This adds overhead but provides a kernel or syscall boundary.
-
-4) Operational hygiene
-- Keep GraalVM engines up to date (single version pin in `gradle/libs.versions.toml`).
-- Minimize the attack surface of the worker container/VM; centralize logging and enforce per-request quotas; aggressively recycle workers.
-
-Minimal changes you can make in this repo for better defaults (still in-process):
-- Change Faas.kt to build the context with reduced permissions, for example:
-  // In PolyglotFaaS.invoke():
-  Context.newBuilder(request.languageId)
-      .allowAllAccess(false)
-      .allowHostAccess(org.graalvm.polyglot.HostAccess.NONE)
-      .allowHostClassLookup { false }
-      .allowNativeAccess(false)
-      .allowCreateThread(false)
-      .option("engine.WarnInterpreterOnly", "false")
-  ... // keep js.esm-eval-returns-exports when needed
-
-Note: These settings make the demo safer but may break handlers that rely on host interop. For true multi-tenant isolation, prefer the separate-process model above.
-
-
-## Troubleshooting
-- Gradle can’t find a JDK: Let Gradle Toolchains download one (no local JDK 21 required). Ensure internet access on first run.
-- Classpath/engine mismatch: Keep the GraalVM artifacts aligned via the single `graalvm` version in `gradle/libs.versions.toml`.
-- Tests can’t find resources: Ensure paths start with `/functions/...` and use `getResourceAsStream` with UTF‑8 decoding as in the tests.
-
-
-## Execution model: worker pool and per-invocation timeouts
+### Execution model: worker pool and per-invocation timeouts
 This project executes invocations on a short-lived worker pool and supports host-side timeouts per invocation.
 
 - Worker pool
@@ -427,4 +391,10 @@ If you just cloned the repo and ran the demo, here are a few next steps you can 
   - docker run -p 8080:8080 ghcr.io/geoffsee/graalfaas:latest
   - Persist uploads: -v $(pwd)/.faas:/app/.faas
 
-Tip: The Project layout section points to the key files if you want to jump straight into the host code (Faas.kt) or the sample functions.
+## Troubleshooting
+- Gradle can’t find a JDK: Let Gradle Toolchains download one (no local JDK 21 required). Ensure internet access on first run.
+- Classpath/engine mismatch: Keep the GraalVM artifacts aligned via the single `graalvm` version in `gradle/libs.versions.toml`.
+- Tests can’t find resources: Ensure paths start with `/functions/...` and use `getResourceAsStream` with UTF‑8 decoding as in the tests.
+
+## Tips
+- The Project layout section points to the key files if you want to jump straight into the host code (Faas.kt) or the sample functions.
