@@ -182,6 +182,9 @@ To persist uploaded functions, mount a volume:
 docker run -p 8080:8080 -v $(pwd)/.faas:/app/.faas ghcr.io/geoffsee/graalfaas:latest
 ```
 
+## Deploy to GCP
+> See `deployment` folder in this project
+
 
 ## Testing
 - All tests: `./gradlew check` or `./gradlew :app:test`
