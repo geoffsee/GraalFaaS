@@ -1,0 +1,10 @@
+{
+  "name": "@graalfaas/graaljs-agent",
+  "scripts": {
+    "dev": "bun main.ts"
+  },
+  "dependencies": {
+    "@openai/agents": "^0.1.10",
+    "zod": "3"
+  }
+}

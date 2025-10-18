@@ -60,13 +60,55 @@ function handler(event) {
 ```
 
 ### Start the HTTP server
+You can start the dev server in two ways:
+
+- Development task (preferred for local use; override port with -Pport):
+```bash
+./gradlew dev -Pport=8080
+```
+
+- Using the existing run task:
 ```bash
 ./gradlew run --args="serve --port 8080"
 ```
 
+### Run the JavaScript Agent (Bun)
+This example uses @openai/agents to stream model output and demonstrate calling the GraalFaaS tool in a realistic workflow.
+
+Prerequisites:
+- Start the GraalFaaS dev server (see above). Defaults to http://localhost:8080
+- Have Bun installed (https://bun.sh)
+- An OpenAI API key in OPENAI_API_KEY (the agent uses @openai/agents)
+
+Steps:
+```bash
+cd ai-examples/graaljs-agent
+bun install
+# point the agent at your server (optional if using the default)
+export GRAALFAAS_URL=http://localhost:8080
+# Option A: have the agent create and invoke a sample function (no env var needed)
+#   → The agent will call graalfaas_create_function then graalfaas_invoke
+bun dev
+
+# Option B: point at an existing function ID so the agent only invokes
+export GRAALFAAS_FUNCTION_ID=hello-js
+bun dev
+```
+
+What to expect:
+- With GRAALFAAS_FUNCTION_ID set, the demo instructs the model to call the graalfaas_invoke tool with an example event payload, then summarize the result and print the raw JSON from the tool.
+- Without GRAALFAAS_FUNCTION_ID, the demo instructs the model to create a small sample function via graalfaas_create_function and then invoke it.
+
+Notes:
+- The tools use GRAALFAAS_URL if set, otherwise http://localhost:8080.
+- Ensure your function ID exists on the server (if using Option B); otherwise the tool will return an error message that the agent will surface.
+- The create tool uploads an inline JS handler that returns { message: "Hello, <name>!" } by default in the demo flow.
+
 The server exposes:
 - `GET /health` - health check endpoint
 - `POST /invoke/{id}` - invoke a function by ID
+- `POST /functions` - create/upload a function from a JSON manifest (see below)
+- `GET /functions` - list uploaded functions
 
 ### Upload functions
 Create a manifest file (JSON or JSONC):
@@ -101,6 +143,20 @@ Upload it:
 ```
 
 Functions are stored in `.faas/functions/{id}.json`
+
+Create via HTTP (no CLI):
+```bash
+echo '{
+  "id": "my-func",
+  "languageId": "js",
+  "functionName": "handler",
+  "source": "function handler(event){ return { message: `Hello, ${'$'}{event.name}!` }; }"
+}' | curl -sS -X POST http://localhost:8080/functions \
+  -H "Content-Type: application/json" \
+  -d @-
+# List functions
+curl -sS http://localhost:8080/functions | jq .
+```
 
 List uploaded functions:
 ```bash

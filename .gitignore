@@ -67,3 +67,4 @@ usage.out
 usage_after_fix.out
 usage_dev.out
 web/
+node_modules
