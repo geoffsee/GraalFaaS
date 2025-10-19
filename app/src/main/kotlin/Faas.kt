@@ -16,11 +16,19 @@ import org.graalvm.polyglot.Source
  *   function handler(event) { return { message: `Hello, ${event.name}!` }; }
  */
 object PolyglotFaaS {
+    data class FileInput(
+        val name: String,
+        val contentType: String? = null,
+        val bytes: ByteArray
+    )
+
     data class InvocationRequest(
         val languageId: String, // e.g. "js"
         val sourceCode: String,
         val functionName: String = "handler",
         val event: Map<String, Any?> = emptyMap(),
+        // Optional user-provided file inputs to be staged on disk for guest access (read-only).
+        val files: List<FileInput> = emptyList(),
         // Optional in-memory dependencies: module name -> source code.
         // For JavaScript, these can be required via require('<moduleName>').
         val dependencies: Map<String, String> = emptyMap(),
@@ -98,6 +106,29 @@ object PolyglotFaaS {
                 }
             }
             .build().use { ctx ->
+                // Stage provided files (if any) into a temporary directory and augment the event with file metadata and paths
+                val __stagedTempDir: java.nio.file.Path? = if (request.files.isNotEmpty()) java.nio.file.Files.createTempDirectory("faas-files-") else null
+                val __stagedFiles: List<Map<String, Any?>> = if (__stagedTempDir != null) {
+                    request.files.map { f ->
+                        val safeName = sanitizeFilename(f.name.ifBlank { "file.bin" })
+                        val p = __stagedTempDir.resolve(safeName)
+                        java.nio.file.Files.write(p, f.bytes)
+                        mapOf(
+                            "name" to f.name,
+                            "contentType" to f.contentType,
+                            "path" to p.toAbsolutePath().toString(),
+                            "size" to f.bytes.size
+                        )
+                    }
+                } else emptyList()
+                val __eventWithFiles: Map<String, Any?> = if (__stagedFiles.isNotEmpty()) {
+                    val m = java.util.LinkedHashMap<String, Any?>(request.event.size + 1)
+                    m.putAll(request.event)
+                    m["files"] = __stagedFiles
+                    m
+                } else request.event
+
+                try {
                 // Optional: install virtualized networking into the guest context
                 if (request.enableNetwork) {
                     val net = VirtualNet()
@@ -234,7 +265,7 @@ object PolyglotFaaS {
                     ctx.eval(request.languageId, request.sourceCode)
                     // For Python, prepare a zero-arg trampoline exported to polyglot bindings
                     if (request.languageId == "python") {
-                        val eventLiteral = toPythonDictLiteral(request.event)
+                        val eventLiteral = toPythonDictLiteral(__eventWithFiles)
                         ctx.eval(
                             "python",
                             """
@@ -264,7 +295,7 @@ object PolyglotFaaS {
                     return@use toHost(resultPy)
                 }
 
-                val result: Value = fn.execute(request.event)
+                val result: Value = fn.execute(__eventWithFiles)
                 // If JavaScript returns a Promise/thenable, await it by default to avoid breaking async handlers
                 if (request.languageId == "js" && isJsThenable(result)) {
                     val resolved: Value = awaitJsPromise(ctx, result)
@@ -272,6 +303,11 @@ object PolyglotFaaS {
                 }
                 // Eagerly convert the result into plain host data structures so it survives after Context close
                 return@use toHost(result)
+                } finally {
+                    if (__stagedTempDir != null) {
+                        try { deleteRecursively(__stagedTempDir) } catch (_: Throwable) {}
+                    }
+                }
             }
 
     private fun toHost(value: Value): Any? {
@@ -352,6 +388,20 @@ object PolyglotFaaS {
                 '\t' -> append("\\t")
                 else -> append(ch)
             }
+        }
+    }
+    private fun sanitizeFilename(name: String): String {
+        val s = name.replace(Regex("[/\\\\]"), "_").trim()
+        return if (s.isBlank()) "file.bin" else s.take(255)
+    }
+
+    private fun deleteRecursively(root: java.nio.file.Path) {
+        try {
+            java.nio.file.Files.walk(root)
+                .sorted(java.util.Comparator.reverseOrder())
+                .forEach { p -> try { java.nio.file.Files.deleteIfExists(p) } catch (_: Throwable) {} }
+        } catch (_: Throwable) {
+            // ignore
         }
     }
 }
