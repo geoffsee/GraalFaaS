@@ -32,7 +32,7 @@ Prerequisites:
 
 ## Limitations
 - Storage exists as an in-memory construct, nothing is persisted.
-- Networking is disabled in the isolates at runtime.
+- Networking is disabled by default. An optional virtualized networking layer can be enabled per invocation (see: Virtualized networking).
 
 ## Way Forward
 Please understand, this was a random idea that happened to blossom. I track with Github issues in this repository as items present.
@@ -457,3 +457,36 @@ If you just cloned the repo and ran the demo, here are a few next steps you can 
 
 ## Tips
 - The Project layout section points to the key files if you want to jump straight into the host code (Faas.kt) or the sample functions.
+
+## Virtualized networking (optional)
+Networking inside guest isolates is disabled by default. You can enable a constrained, host‑mediated HTTP client per invocation by setting enableNetwork = true on InvocationRequest. This exposes a minimal API to guest code without granting full host access.
+
+- JavaScript:
+  - A fetch polyfill is installed if absent: fetch(url, {method, headers, body}) returning a Promise that resolves to a Response-like object with ok, status, url, headers.get(name), text(), and json(). The polyfill is non-streaming and intended for basic requests.
+  - A legacy net helper also exists for compatibility: globalThis.net.http(method, url, body?, headers?), net.get(url, headers?), net.post(url, body?, headers?). Prefer fetch in new code.
+- Python:
+  - A net helper object is injected with methods net.http(method, url, body=None, headers=None), net.get(url, headers=None), net.post(url, body=None, headers=None)
+
+Example (Kotlin host):
+```kotlin
+val js = """
+  async function handler(event) {
+    const res = await fetch(event.url)
+    return { status: res.status, body: await res.text() }
+  }
+""".trimIndent()
+val result = PolyglotFaaS.invoke(
+  PolyglotFaaS.InvocationRequest(
+    languageId = "js",
+    sourceCode = js,
+    enableNetwork = true,
+    event = mapOf("url" to "https://example.org/")
+  )
+)
+```
+
+Notes and constraints:
+- Timeouts: host applies modest connect/request timeouts; this is not intended for long‑lived streaming.
+- Headers: some restricted headers are filtered (e.g., Host, Content‑Length, Connection).
+- Responses: Response helpers text() and json() return Promises; use `await` or `.then(...)` (and headers.get(name) to read response headers).
+- Security: this is a demo‑level API that proxies requests through the host. For production use, restrict destinations, enforce quotas/timeouts, and harden language access accordingly.

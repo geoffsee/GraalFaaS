@@ -71,6 +71,25 @@ class PolyglotFaasTest {
         assertEquals("Hello, PyUser!", result as String)
     }
 
+    @Test
+    fun `javascript async handler is awaited by default`() {
+        val jsSource = """
+            async function handler(event) {
+              return { message: `Hello, ${'$'}{event.name}!` };
+            }
+        """.trimIndent()
+        val result = PolyglotFaaS.invoke(
+            PolyglotFaaS.InvocationRequest(
+                languageId = "js",
+                sourceCode = jsSource,
+                functionName = "handler",
+                event = mapOf("name" to "AsyncUser")
+            )
+        )
+        assertTrue(result is Map<*, *>, "Result should be a Map, was: ${'$'}{result?.javaClass}")
+        assertEquals("Hello, AsyncUser!", (result as Map<*, *>)["message"])
+    }
+
     private fun loadResource(path: String): String {
         val stream = {}::class.java.getResourceAsStream(path)
             ?: error("Resource not found: $path")

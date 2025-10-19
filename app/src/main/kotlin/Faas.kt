@@ -27,7 +27,9 @@ object PolyglotFaaS {
         // JavaScript: Evaluate source as an ES module instead of a classic script.
         val jsEvalAsModule: Boolean = false,
         // Host-side timeout for this invocation in milliseconds. Null or <= 0 means no timeout.
-        val timeoutMillis: Long? = null
+        val timeoutMillis: Long? = null,
+        // Enable simple virtualized networking (fetch in JS, net.http in Python)
+        val enableNetwork: Boolean = false
     )
 
     class FunctionNotFoundException(languageId: String, functionName: String) :
@@ -96,6 +98,92 @@ object PolyglotFaaS {
                 }
             }
             .build().use { ctx ->
+                // Optional: install virtualized networking into the guest context
+                if (request.enableNetwork) {
+                    val net = VirtualNet()
+                    // Expose to both JS and Python via bindings/polyglot
+                    ctx.polyglotBindings.putMember("__net", net)
+                    if (request.languageId == "js") {
+                        val jsBindings = ctx.getBindings("js")
+                        jsBindings.putMember("__net", net)
+                        ctx.eval(
+                            "js",
+                            (
+                                "(function(){\n" +
+                                    "  if (typeof globalThis.net === 'undefined') {\n" +
+                                    "    globalThis.net = {\n" +
+                                    "      http: function(method, url, body, headers){ return __net.http(String(method||'GET'), String(url), body==null?null:String(body), headers||{}); },\n" +
+                                    "      get: function(url, headers){ return __net.http('GET', String(url), null, headers||{}); },\n" +
+                                    "      post: function(url, body, headers){ return __net.http('POST', String(url), body==null?'':String(body), headers||{}); }\n" +
+                                    "    };\n" +
+                                    "  }\n" +
+                                    "  if (typeof globalThis.fetch === 'undefined') {\n" +
+                                    "    const __normalizeHeaders = (h) => {\n" +
+                                    "      const out = Object.create(null);\n" +
+                                    "      if (!h) return out;\n" +
+                                    "      if (typeof h.forEach === 'function') {\n" +
+                                    "        h.forEach((v,k) => { out[String(k).toLowerCase()] = String(v); });\n" +
+                                    "        return out;\n" +
+                                    "      }\n" +
+                                    "      if (Array.isArray(h)) {\n" +
+                                    "        for (const pair of h) { if (pair && pair.length>=2) out[String(pair[0]).toLowerCase()] = String(pair[1]); }\n" +
+                                    "        return out;\n" +
+                                    "      }\n" +
+                                    "      if (typeof h === 'object') {\n" +
+                                    "        for (const k in h) if (Object.prototype.hasOwnProperty.call(h,k)) out[String(k).toLowerCase()] = String(h[k]);\n" +
+                                    "      }\n" +
+                                    "      return out;\n" +
+                                    "    };\n" +
+                                    "    globalThis.fetch = function(input, init){\n" +
+                                    "      init = init || {};\n" +
+                                    "      const url = (typeof input === 'string') ? input : (input && input.url);\n" +
+                                    "      const method = (init.method || 'GET');\n" +
+                                    "      const headers = __normalizeHeaders(init.headers);\n" +
+                                    "      const body = ('body' in init) ? init.body : null;\n" +
+                                    "      return new Promise((resolve, reject) => {\n" +
+                                    "        try {\n" +
+                                    "          const res = __net.http(String(method), String(url), body==null?null:String(body), headers);\n" +
+                                    "          const _map = res.headers;\n" +
+                                    "          const headersObj = {\n" +
+                                    "            get(name){ name = String(name).toLowerCase(); try { if (_map && typeof _map.get === 'function') return _map.get(name) ?? null; } catch(_) {} return (_map && _map[name]) || null; },\n" +
+                                    "            has(name){ name = String(name).toLowerCase(); try { if (_map && typeof _map.containsKey === 'function') return !!_map.containsKey(name); } catch(_) {} return !!(_map && (_map[name] !== undefined)); }\n" +
+                                    "          };\n" +
+                                    "          resolve({\n" +
+                                    "            ok: (res.status>=200 && res.status<300),\n" +
+                                    "            status: res.status,\n" +
+                                    "            headers: headersObj,\n" +
+                                    "            url: String(url),\n" +
+                                    "            text: () => Promise.resolve(String(res.body)),\n" +
+                                    "            json: () => new Promise((resolveJson, rejectJson) => { try { resolveJson(JSON.parse(String(res.body))); } catch(e) { rejectJson(e); } })\n" +
+                                    "          });\n" +
+                                    "        } catch (e) {\n" +
+                                    "          reject(e);\n" +
+                                    "        }\n" +
+                                    "      });\n" +
+                                    "    };\n" +
+                                    "  }\n" +
+                                    "})();\n"
+                            )
+                        )
+                    } else if (request.languageId == "python") {
+                        ctx.eval(
+                            "python",
+                            (
+                                "import polyglot\n" +
+                                    "__net = polyglot.import_value('__net')\n" +
+                                    "class _Net:\n" +
+                                    "    def http(self, method, url, body=None, headers=None):\n" +
+                                    "        return __net.http(str(method or 'GET'), str(url), body if body is not None else None, headers or {})\n" +
+                                    "    def get(self, url, headers=None):\n" +
+                                    "        return __net.http('GET', str(url), None, headers or {})\n" +
+                                    "    def post(self, url, body=None, headers=None):\n" +
+                                    "        return __net.http('POST', str(url), '' if body is None else body, headers or {})\n" +
+                                    "net = _Net()\n"
+                            )
+                        )
+                    }
+                }
+
                 // Optional dependency wiring for JavaScript (simple CommonJS-like loader)
                 if (request.languageId == "js" && request.dependencies.isNotEmpty()) {
                     val jsBindings = ctx.getBindings("js")
@@ -177,6 +265,11 @@ object PolyglotFaaS {
                 }
 
                 val result: Value = fn.execute(request.event)
+                // If JavaScript returns a Promise/thenable, await it by default to avoid breaking async handlers
+                if (request.languageId == "js" && isJsThenable(result)) {
+                    val resolved: Value = awaitJsPromise(ctx, result)
+                    return@use toHost(resolved)
+                }
                 // Eagerly convert the result into plain host data structures so it survives after Context close
                 return@use toHost(result)
             }
@@ -262,3 +355,56 @@ object PolyglotFaaS {
         }
     }
 }
+
+    private fun isJsThenable(value: Value?): Boolean {
+        if (value == null) return false
+        return try {
+            value.hasMember("then") && value.getMember("then").canExecute()
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun awaitJsPromise(ctx: Context, promise: Value): Value {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val ref = java.util.concurrent.atomic.AtomicReference<Value>()
+        val errRef = java.util.concurrent.atomic.AtomicReference<Throwable?>()
+
+        val onFulfilled = org.graalvm.polyglot.proxy.ProxyExecutable { args ->
+            try {
+                if (args.isNotEmpty()) ref.set(args[0]) else ref.set(null)
+            } finally {
+                latch.countDown()
+            }
+            null
+        }
+        val onRejected = org.graalvm.polyglot.proxy.ProxyExecutable { args ->
+            try {
+                val reason = if (args.isNotEmpty()) args[0] else null
+                errRef.set(RuntimeException(reason?.toString() ?: "Promise rejected"))
+            } finally {
+                latch.countDown()
+            }
+            null
+        }
+
+        // Attach handlers
+        try {
+            promise.invokeMember("then", onFulfilled, onRejected)
+        } catch (t: Throwable) {
+            throw RuntimeException("Failed to attach then/catch to JS Promise: ${t.message}", t)
+        }
+
+        // Pump the JS engine microtask queue until the promise settles.
+        // We periodically enter JS to give the engine a chance to process queued jobs.
+        while (!latch.await(1, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+            try {
+                ctx.eval("js", "(void 0)")
+            } catch (_: Throwable) {
+                // ignore: empty eval used to yield back into JS
+            }
+        }
+
+        errRef.get()?.let { throw it }
+        return ref.get()
+    }
