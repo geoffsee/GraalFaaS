@@ -18,7 +18,7 @@ function log(level: string, message: string, data?: any) {
 
 // Optional env configuration for a realistic tool demo
 const SERVER_URL = process.env.GRAALFAAS_URL || "http://localhost:8080";
-const FUNCTION_ID = process.env.GRAALFAAS_FUNCTION_ID; // e.g., "hello-js" uploaded to the server
+const FUNCTION_ID = process.env.GRAALFAAS_FUNCTION_ID; // UUIDv7 id assigned by the server (e.g., from graalfaas_create_function response)
 log("INFO", "Initializing GraalFaaS Agent", { serverUrl: SERVER_URL, functionId: FUNCTION_ID });
 
 log("INFO", "Creating agent with GraalFaaS tools");
@@ -30,7 +30,7 @@ Use graalfaas_create_function to create functions and graalfaas_invoke to run th
 Be concise in your responses and always show the tool results.
 
 When creating a JavaScript function, use this format:
-- id: unique identifier (e.g., "hello-js")
+- Note: The server assigns a UUIDv7 id; you do not provide one during creation
 - languageId: "js"
 - functionName: "handler" (or specify a custom name)
 - source: the JavaScript function code
@@ -44,7 +44,7 @@ Example Python hello function:
 def handler(event):
   return {"message": f"Hello, {event['name']}!"}
 
-Always provide ALL required fields when creating functions: serverUrl, id, languageId, functionName, and source.`,
+Always provide these fields when creating functions: serverUrl, languageId, functionName, and source. Capture the returned id from graalfaas_create_function and use it in subsequent graalfaas_invoke calls.`,
     model: "gpt-4.1-mini",
     tools: [createGraalFaasCreateTool(), createGraalFaasInvokeTool()],
 });
@@ -53,7 +53,7 @@ log("INFO", "Agent created successfully");
 // Build a real-world task that prompts the model to use the tool.
 const userTask = FUNCTION_ID
   ? `Invoke function "${FUNCTION_ID}" at ${SERVER_URL}. The event parameter must be {"name":"Agent Demo"}.`
-  : `Create a JavaScript hello function at ${SERVER_URL} with id "hello-js", then invoke it. When invoking, the event parameter must be {"name":"Agent Demo"}.`;
+  : `Create a JavaScript hello function at ${SERVER_URL}. Capture the function id returned by graalfaas_create_function, then invoke it using graalfaas_invoke. When invoking, the event parameter must be {"name":"Agent Demo"}.`;
 
 log("INFO", "Starting agent execution", { taskType: FUNCTION_ID ? "invoke-only" : "create-and-invoke" });
 const startTime = Date.now();

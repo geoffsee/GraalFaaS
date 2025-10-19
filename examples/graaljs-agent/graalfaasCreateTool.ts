@@ -23,7 +23,6 @@ export function createGraalFaasCreateTool() {
     description: "Create a new function on the GraalFaaS server.",
     parameters: z.object({
       serverUrl: z.string().describe("Base URL of the GraalFaaS server"),
-      id: z.string().describe("Unique function ID"),
       languageId: z.enum(["js", "python"]).describe("Programming language"),
       functionName: z.string().describe("Handler function name"),
       source: z.string().describe("Source code for the function"),
@@ -31,7 +30,6 @@ export function createGraalFaasCreateTool() {
     execute: async (args) => {
       const creationId = `create-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       log("INFO", `[${creationId}] Tool invoked`, {
-        id: args.id,
         languageId: args.languageId,
         functionName: args.functionName,
         hasSource: !!args.source,
@@ -42,14 +40,12 @@ export function createGraalFaasCreateTool() {
       const serverUrl = (args.serverUrl || envUrl || "http://localhost:8080").replace(/\/$/, "");
 
       const manifest: Record<string, any> = {
-        id: args.id,
         languageId: args.languageId,
         functionName: args.functionName,
         source: args.source,
       };
 
       log("INFO", `[${creationId}] Creating function`, {
-        id: manifest.id,
         languageId: manifest.languageId,
         functionName: manifest.functionName
       });
@@ -73,14 +69,17 @@ export function createGraalFaasCreateTool() {
 
         if (!res.ok) {
           log("WARN", `[${creationId}] Function creation failed`, { status: res.status, response: text });
-          return `GraalFaaS error (${res.status}): ${text}`;
+          return { error: `GraalFaaS error (${res.status})`, status: res.status, response: text };
         }
 
-        log("INFO", `[${creationId}] Function created successfully`, { id: manifest.id });
-        return text;
+        let parsed: any = undefined;
+        try { parsed = JSON.parse(text); } catch {}
+        const assignedId = parsed?.id;
+        log("INFO", `[${creationId}] Function created successfully`, { id: assignedId });
+        return parsed ?? { raw: text };
       } catch (err) {
         log("ERROR", `[${creationId}] Failed to reach GraalFaaS`, { url, error: String(err) });
-        return `Failed to reach GraalFaaS at ${url}: ${String(err)}`;
+        return { error: `Failed to reach GraalFaaS at ${url}`, detail: String(err) };
       }
     },
   });

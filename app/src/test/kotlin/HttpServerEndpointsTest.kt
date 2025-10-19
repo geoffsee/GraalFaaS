@@ -27,7 +27,6 @@ class HttpServerEndpointsTest {
         try {
             // 1) Create function via HTTP
             val manifest = mapOf(
-                "id" to "test-func",
                 "languageId" to "js",
                 "functionName" to "handler",
                 "source" to "function handler(event){ return { message: `Hello, ${'$'}{event.name}!` }; }"
@@ -35,7 +34,10 @@ class HttpServerEndpointsTest {
             val (createStatus, createBody) = httpPostJson("$base/functions", Assets.gson.toJson(manifest))
             assertEquals(201, createStatus, "POST /functions should return 201 Created, got $createStatus with body: $createBody")
             val createJson = Assets.gson.fromJson(createBody, Map::class.java)
-            assertEquals("test-func", createJson["id"])
+            val assignedId = createJson["id"] as String
+            // UUIDv7 pattern: version 7 and RFC variant 8,9,a,b
+            val uuidV7Regex = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+            assertTrue(uuidV7Regex.matches(assignedId), "Server-assigned id must be a UUIDv7, got: $assignedId")
             assertEquals("js", createJson["languageId"])
             assertEquals("handler", createJson["functionName"])
 
@@ -43,10 +45,10 @@ class HttpServerEndpointsTest {
             val (listStatus, listBody) = httpGet("$base/functions")
             assertEquals(200, listStatus)
             val list = Assets.gson.fromJson(listBody, List::class.java)
-            assertTrue(list.any { (it as Map<*, *>) ["id"] == "test-func" }, "GET /functions should include the uploaded function. Body: $listBody")
+            assertTrue(list.any { (it as Map<*, *>) ["id"] == assignedId }, "GET /functions should include the uploaded function. Body: $listBody")
 
             // 3) Invoke it
-            val (invokeStatus, invokeBody) = httpPostJson("$base/invoke/test-func", "{" + "\"name\":\"World\"" + "}")
+            val (invokeStatus, invokeBody) = httpPostJson("$base/invoke/$assignedId", "{" + "\"name\":\"World\"" + "}")
             assertEquals(200, invokeStatus, "POST /invoke/{id} should succeed: $invokeBody")
             val invokeJson = Assets.gson.fromJson(invokeBody, Map::class.java)
             assertEquals("Hello, World!", invokeJson["message"], "Invocation result should contain greeting. Body: $invokeBody")
