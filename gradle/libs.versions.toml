@@ -19,6 +19,7 @@ kotlinxCoroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", 
 polyglot = { module = "org.graalvm.polyglot:polyglot", version.ref = "graalvm" }
 js = { module = "org.graalvm.js:js", version.ref = "graalvm" }
 python = { module = "org.graalvm.python:python", version.ref = "graalvm" }
+ruby = { module = "org.graalvm.ruby:ruby", version.ref = "graalvm" }
 # Google Gson JSON
 gson = { module = "com.google.code.gson:gson", version = "2.11.0" }
 

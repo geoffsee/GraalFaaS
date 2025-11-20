@@ -18,6 +18,7 @@ dependencies {
     implementation(libs.polyglot)
     implementation(libs.js)
     implementation(libs.python)
+    implementation(libs.ruby)
 
     // JSON parsing/serialization via Gson
     implementation(libs.gson)

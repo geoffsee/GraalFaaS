@@ -1,0 +1,52 @@
+name: Nightly Docker Image
+
+on:
+  schedule:
+    # Run at 02:15 UTC every day
+    - cron: '15 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image coordinates
+        id: meta
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER}/graalfaas"
+          DATE_TAG=$(date -u +"%Y%m%d")
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "date_tag=${DATE_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push container image with Jib (nightly + date tag)
+        run: |
+          ./gradlew --no-configuration-cache :app:jib \
+            -Djib.to.image=${{ steps.meta.outputs.image }}:nightly \
+            -Djib.to.tags=nightly,${{ steps.meta.outputs.date_tag }}
+

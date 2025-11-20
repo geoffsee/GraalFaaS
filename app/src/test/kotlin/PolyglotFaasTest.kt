@@ -24,6 +24,21 @@ class PolyglotFaasTest {
     }
 
     @Test
+    fun `ruby hello handler returns greeting`() {
+        val rbSource = loadResource("/functions/rb/hello.rb")
+        val result = PolyglotFaaS.invoke(
+            PolyglotFaaS.InvocationRequest(
+                languageId = "ruby",
+                sourceCode = rbSource,
+                functionName = "handler",
+                event = mapOf("name" to "RbUser")
+            )
+        )
+        assertTrue(result is Map<*, *>, "Result should be a Map, was: ${'$'}{result?.javaClass}")
+        assertEquals("Hello, RbUser!", (result as Map<*, *>) ["message"])
+    }
+
+    @Test
     fun `javascript handler with dependency returns greeting`() {
         val main = loadResource("/functions/js/hello-dep.js")
         val dep = loadResource("/functions/js/lib/greeter.js")

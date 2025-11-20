@@ -212,6 +212,28 @@ object PolyglotFaaS {
                                     "net = _Net()\n"
                             )
                         )
+                    } else if (request.languageId == "ruby") {
+                        ctx.eval(
+                            "ruby",
+                            (
+                                "class NetF\n" +
+                                    "  def initialize\n" +
+                                    "    @net = Polyglot.import('__net')\n" +
+                                    "  end\n" +
+                                    "  def http(method, url, body=nil, headers=nil)\n" +
+                                    "    @net.http((method || 'GET').to_s, url.to_s, body.nil? ? nil : body.to_s, headers || {})\n" +
+                                    "  end\n" +
+                                    "  def get(url, headers=nil)\n" +
+                                    "    @net.http('GET', url.to_s, nil, headers || {})\n" +
+                                    "  end\n" +
+                                    "  def post(url, body=nil, headers=nil)\n" +
+                                    "    @net.http('POST', url.to_s, body.nil? ? '' : body, headers || {})\n" +
+                                    "  end\n" +
+                                    "end\n" +
+                                    "\$net = NetF.new\n" +
+                                    "def net; \$net; end\n"
+                            )
+                        )
                     }
                 }
 
@@ -275,6 +297,15 @@ object PolyglotFaaS {
                             polyglot.export_value('__faas_invoke__', __faas_invoke__)
                             """.trimIndent()
                         )
+                    } else if (request.languageId == "ruby") {
+                        val eventLiteralRb = toRubyHashLiteral(__eventWithFiles)
+                        ctx.eval(
+                            "ruby",
+                            (
+                                "__faas_invoke__ = -> { ${request.functionName}(${eventLiteralRb}) }\n" +
+                                    "Polyglot.export('__faas_invoke__', __faas_invoke__)\n"
+                            )
+                        )
                     }
                     null
                 }
@@ -285,12 +316,14 @@ object PolyglotFaaS {
                 } else if (request.languageId == "python") {
                     // Retrieve the exported trampoline from the polyglot bindings
                     ctx.polyglotBindings.getMember("__faas_invoke__")
+                } else if (request.languageId == "ruby") {
+                    ctx.polyglotBindings.getMember("__faas_invoke__")
                 } else {
                     ctx.getBindings(request.languageId).getMember(request.functionName)
                 }
                 if (fn == null || !fn.canExecute()) throw FunctionNotFoundException(request.languageId, request.functionName)
 
-                if (request.languageId == "python") {
+                if (request.languageId == "python" || request.languageId == "ruby") {
                     val resultPy: Value = fn.execute()
                     return@use toHost(resultPy)
                 }
@@ -329,6 +362,25 @@ object PolyglotFaaS {
             }
             return list
         }
+        // Treat mapping types first if they expose Ruby/Python-like map API
+        if (value.canInvokeMember("keys") && value.canInvokeMember("[]")) {
+            val map = LinkedHashMap<String, Any?>()
+            try {
+                val klist = value.invokeMember("keys")
+                if (klist != null && klist.hasArrayElements()) {
+                    var i = 0L
+                    val size = klist.arraySize
+                    while (i < size) {
+                        val k = toHost(klist.getArrayElement(i))?.toString() ?: "null"
+                        map[k] = toHost(value.invokeMember("[]", k))
+                        i++
+                    }
+                }
+            } catch (_: Throwable) {
+                // ignore
+            }
+            return map
+        }
         if (value.hasMembers()) {
             val map = LinkedHashMap<String, Any?>()
             val keys = value.memberKeys
@@ -341,7 +393,7 @@ object PolyglotFaaS {
                         map[key] = toHost(value.getMember(key))
                     }
                 }
-            } else {
+            } else if (keys.isNotEmpty()) {
                 for (key in keys) {
                     map[key] = toHost(value.getMember(key))
                 }
@@ -379,6 +431,44 @@ object PolyglotFaaS {
     }
 
     private fun escapePy(s: String): String = buildString(s.length + 8) {
+        for (ch in s) {
+            when (ch) {
+                '\\' -> append("\\\\")
+                '\'' -> append("\\'")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> append(ch)
+            }
+        }
+    }
+    // Build a Ruby hash literal from a Kotlin/Java map
+    private fun toRubyHashLiteral(map: Map<*, *>?): String {
+        if (map == null) return "nil"
+        val entries = map.entries.joinToString(", ") { (k, v) ->
+            val key = (k?.toString() ?: "null")
+            "'${escapeRuby(key)}' => ${toRubyLiteral(v)}"
+        }
+        return "{" + entries + "}"
+    }
+
+    private fun toRubyArrayLiteral(list: Iterable<*>?): String {
+        if (list == null) return "nil"
+        return list.joinToString(prefix = "[", postfix = "]", separator = ", ") { toRubyLiteral(it) }
+    }
+
+    private fun toRubyLiteral(v: Any?): String = when (v) {
+        null -> "nil"
+        is String -> "'${escapeRuby(v)}'"
+        is Number -> v.toString()
+        is Boolean -> if (v) "true" else "false"
+        is Map<*, *> -> toRubyHashLiteral(v)
+        is Iterable<*> -> toRubyArrayLiteral(v)
+        is Array<*> -> toRubyArrayLiteral(v.asList())
+        else -> "'${escapeRuby(v.toString())}'"
+    }
+
+    private fun escapeRuby(s: String): String = buildString(s.length + 8) {
         for (ch in s) {
             when (ch) {
                 '\\' -> append("\\\\")

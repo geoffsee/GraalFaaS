@@ -8,6 +8,7 @@ A minimal polyglot Function‑as‑a‑Service (FaaS) built on GraalVM's Polyglo
 Supported guest languages:
 - JavaScript (GraalJS)
 - Python (GraalPython)
+- Ruby (TruffleRuby)
 
 ## Prelude
 The GraalVM project stands as a remarkable gift and catalyst, enabling seamless interoperability among modern JVM languages like Kotlin and Scala while unlocking the power accumulated over 30 years of Java’s rich ecosystem. 
@@ -65,6 +66,39 @@ You can start the dev server in two ways:
 - Development task (preferred for local use; override port with -Pport):
 ```bash
 ./gradlew dev -Pport=8080
+```
+
+### Ruby example
+Ruby support mirrors the JS/Python patterns. A sample handler is provided at `app/src/main/resources/functions/rb/hello.rb`:
+
+```ruby
+def handler(event)
+  name = event['name'] || 'World'
+  { 'message' => "Hello, #{name}!" }
+end
+```
+
+Invoke it from Kotlin:
+
+```kotlin
+val rbSource = loadResource("/functions/rb/hello.rb")
+val result = PolyglotFaaS.invoke(
+    PolyglotFaaS.InvocationRequest(
+        languageId = "ruby",
+        sourceCode = rbSource,
+        functionName = "handler",
+        event = mapOf("name" to "Ruby")
+    )
+)
+```
+
+Networking helper in Ruby (when `enableNetwork = true`): a lightweight `net` object is available with `get`, `post`, and `http` methods backed by the host’s VirtualNet:
+
+```ruby
+def handler(event)
+  r = net.get(event['url'], { 'X-Test' => '1' })
+  { 'status' => r['status'], 'body' => r['body'] }
+end
 ```
 
 - Using the existing run task:

@@ -64,4 +64,31 @@ class NetworkingTest {
         assertTrue((map["ct"] as? String)?.contains("application/json") == true)
         assertTrue((map["json"] as? String)?.contains("\"ok\":true") == true)
     }
+
+    @Test
+    fun `ruby handler can net get`() {
+        val rbSource = """
+            def handler(event)
+              r = net.get(event['url'], { 'X-Test' => '1' })
+              status = r['status']
+              ct = (r['headers'] || {})['content-type']
+              body = r['body']
+              { 'status' => status, 'ct' => ct, 'ok' => (status >= 200 && status < 300), 'hasOk' => body.include?('"ok":true') }
+            end
+        """.trimIndent()
+        val result = PolyglotFaaS.invoke(
+            PolyglotFaaS.InvocationRequest(
+                languageId = "ruby",
+                sourceCode = rbSource,
+                enableNetwork = true,
+                event = mapOf("url" to "$baseUrl/ping")
+            )
+        )
+        assertTrue(result is Map<*, *>, "Result should be a Map, was: ${'$'}{result?.javaClass}")
+        val map = result as Map<*, *>
+        assertEquals(true, map["ok"])
+        assertEquals(200, map["status"])
+        assertTrue((map["ct"] as? String)?.contains("application/json") == true)
+        assertEquals(true, map["hasOk"])
+    }
 }
