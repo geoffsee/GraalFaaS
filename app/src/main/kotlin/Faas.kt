@@ -37,7 +37,10 @@ object PolyglotFaaS {
         // Host-side timeout for this invocation in milliseconds. Null or <= 0 means no timeout.
         val timeoutMillis: Long? = null,
         // Enable simple virtualized networking (fetch in JS, net.http in Python)
-        val enableNetwork: Boolean = false
+        val enableNetwork: Boolean = false,
+        // Optional platform object exposing host-managed resources owned by the function.
+        // When present, it is injected as event.platform for all languages.
+        val platform: Any? = null
     )
 
     class FunctionNotFoundException(languageId: String, functionName: String) :
@@ -127,6 +130,13 @@ object PolyglotFaaS {
                     m["files"] = __stagedFiles
                     m
                 } else request.event
+                // If a platform object is provided, inject it into the event map as `platform`
+                val __event: Map<String, Any?> = if (request.platform != null) {
+                    val m = java.util.LinkedHashMap<String, Any?>(__eventWithFiles.size + 1)
+                    m.putAll(__eventWithFiles)
+                    m["platform"] = request.platform
+                    m
+                } else __eventWithFiles
 
                 try {
                 // Optional: install virtualized networking into the guest context
@@ -287,22 +297,47 @@ object PolyglotFaaS {
                     ctx.eval(request.languageId, request.sourceCode)
                     // For Python, prepare a zero-arg trampoline exported to polyglot bindings
                     if (request.languageId == "python") {
-                        val eventLiteral = toPythonDictLiteral(__eventWithFiles)
+                        // Export platform to polyglot bindings if present, and inject it into the event at call time
+                        if (request.platform != null) {
+                            ctx.polyglotBindings.putMember("__platform", request.platform)
+                        }
+                        // Build the event literal WITHOUT host objects; platform is injected from polyglot bindings
+                        val eventLiteral = toPythonDictLiteral(
+                            if (request.platform != null) java.util.LinkedHashMap(__event).also { it.remove("platform") } else __event
+                        )
                         ctx.eval(
                             "python",
                             """
                             import polyglot
                             def __faas_invoke__():
-                                return ${request.functionName}(${eventLiteral})
+                                _event = ${eventLiteral}
+                                try:
+                                    _event['platform'] = polyglot.import_value('__platform')
+                                except Exception:
+                                    pass
+                                return ${request.functionName}(_event)
                             polyglot.export_value('__faas_invoke__', __faas_invoke__)
                             """.trimIndent()
                         )
                     } else if (request.languageId == "ruby") {
-                        val eventLiteralRb = toRubyHashLiteral(__eventWithFiles)
+                        // Export platform to polyglot bindings if present, and inject it into the event at call time
+                        if (request.platform != null) {
+                            ctx.polyglotBindings.putMember("__platform", request.platform)
+                        }
+                        val eventLiteralRb = toRubyHashLiteral(
+                            if (request.platform != null) java.util.LinkedHashMap(__event).also { it.remove("platform") } else __event
+                        )
                         ctx.eval(
                             "ruby",
                             (
-                                "__faas_invoke__ = -> { ${request.functionName}(${eventLiteralRb}) }\n" +
+                                "__faas_invoke__ = -> {\n" +
+                                    "  event = ${eventLiteralRb}\n" +
+                                    "  begin\n" +
+                                    "    event['platform'] = Polyglot.import('__platform')\n" +
+                                    "  rescue => e\n" +
+                                    "  end\n" +
+                                    "  ${request.functionName}(event)\n" +
+                                    "}\n" +
                                     "Polyglot.export('__faas_invoke__', __faas_invoke__)\n"
                             )
                         )
@@ -328,7 +363,50 @@ object PolyglotFaaS {
                     return@use toHost(resultPy)
                 }
 
-                val result: Value = fn.execute(__eventWithFiles)
+                // For JavaScript classic scripts, if a platform object is provided, wrap the target function
+                // so that event.platform is ensured to be a lightweight JS shim delegating to the host platform.
+                val callable: Value = if (request.languageId == "js" && !request.jsEvalAsModule && request.platform != null) {
+                    val jsBindings = ctx.getBindings("js")
+                    jsBindings.putMember("__platform", request.platform)
+                    val fname = request.functionName.replace("\\", "\\\\").replace("'", "\\'")
+                    ctx.eval(
+                        "js",
+                        (
+                            "(function(){\n" +
+                                "  const __target = (typeof globalThis['" + fname + "'] === 'function') ? globalThis['" + fname + "'] : undefined;\n" +
+                                "  const __buildPlatformShim = function(){\n" +
+                                "    const p = __platform;\n" +
+                                "    const shim = {};\n" +
+                                "    // Always expose a kv facade; host methods are safe no-ops if unavailable\n" +
+                                "    shim.kv = {\n" +
+                                "      get: (k) => { try { return p.kvGet(String(k)); } catch(e) { return null; } },\n" +
+                                "      put: (k,v) => { try { p.kvPut(String(k), String(v)); } catch(e) {} },\n" +
+                                "      delete: (k) => { try { p.kvDelete(String(k)); } catch(e) {} },\n" +
+                                "      keys: () => { try { return Array.from(p.kvKeys()); } catch(e) { return []; } }\n" +
+                                "    };\n" +
+                                "    return shim;\n" +
+                                "  };\n" +
+                                "  function __copyEvent(e){\n" +
+                                "    try {\n" +
+                                "      const ev = {};\n" +
+                                "      const ks = Object.keys(e || {});\n" +
+                                "      for (let i=0;i<ks.length;i++){ const k = ks[i]; try { ev[k] = e[k]; } catch(_) {} }\n" +
+                                "      return ev;\n" +
+                                "    } catch(_) { return {}; }\n" +
+                                "  }\n" +
+                                "  globalThis.__faas_invoke__ = function(event){\n" +
+                                "    const ev = __copyEvent(event);\n" +
+                                "    try { ev.platform = __buildPlatformShim(); } catch(_) {}\n" +
+                                "    if (!__target) throw new Error('Function not found');\n" +
+                                "    return __target(ev);\n" +
+                                "  };\n" +
+                                "})();\n"
+                        )
+                    )
+                    ctx.getBindings("js").getMember("__faas_invoke__")
+                } else fn
+
+                val result: Value = callable.execute(__event)
                 // If JavaScript returns a Promise/thenable, await it by default to avoid breaking async handlers
                 if (request.languageId == "js" && isJsThenable(result)) {
                     val resolved: Value = awaitJsPromise(ctx, result)

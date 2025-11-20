@@ -95,6 +95,7 @@ private fun loadResource(path: String): String {
 fun createServer(port: Int): HttpServer {
     log("INFO", "Creating HTTP server on port $port")
     Assets.ensureDirs()
+    Resources.ensureDirs()
     val server = HttpServer.create(InetSocketAddress(port), 0)
 
     server.createContext("/health", HttpHandler { exchange ->
@@ -145,6 +146,8 @@ fun createServer(port: Int): HttpServer {
             }
             log("INFO", "[$requestId] Invoking function: $id (lang=${asset.languageId}, fn=${asset.functionName})")
             val invokeStartTime = System.currentTimeMillis()
+            val platform = Resources.platformForFunction(id)
+            log("DEBUG", "[$requestId] platform for function $id: present=${platform != null}, hasKv=${platform?.hasKv()}" )
             val result = PolyglotFaaS.invoke(
                 PolyglotFaaS.InvocationRequest(
                     languageId = asset.languageId,
@@ -153,7 +156,8 @@ fun createServer(port: Int): HttpServer {
                     event = event,
                     dependencies = asset.dependencies,
                     jsEvalAsModule = asset.jsEvalAsModule,
-                    timeoutMillis = 5_000
+                    timeoutMillis = 5_000,
+                    platform = platform
                 )
             )
             val invokeDuration = System.currentTimeMillis() - invokeStartTime
@@ -241,6 +245,88 @@ fun createServer(port: Int): HttpServer {
         }
     }
 
+    // Create or list resources
+    server.createContext("/resources") { exchange ->
+        val requestId = generateRequestId()
+        val startTime = System.currentTimeMillis()
+        try {
+            log("INFO", "[$requestId] ${exchange.requestMethod} ${exchange.requestURI.path} from ${exchange.remoteAddress}")
+
+            when (exchange.requestMethod.uppercase()) {
+                "POST" -> {
+                    val body = exchange.requestBody.use { it.readAllBytes().toString(StandardCharsets.UTF_8) }
+                    if (body.isBlank()) {
+                        log("WARN", "[$requestId] Empty request body")
+                        sendJson(exchange, 400, mapOf("error" to "Empty request body"))
+                        return@createContext
+                    }
+                    val req = try {
+                        Assets.gson.fromJson(body, Resources.CreateRequest::class.java)
+                    } catch (e: Exception) {
+                        log("WARN", "[$requestId] Invalid JSON in request: ${e.message}")
+                        sendJson(exchange, 400, mapOf("error" to "Invalid JSON: ${e.message}"))
+                        return@createContext
+                    }
+                    if (req.type.isBlank()) {
+                        sendJson(exchange, 400, mapOf("error" to "'type' is required"))
+                        return@createContext
+                    }
+                    val rec = Resources.create(req)
+                    log("INFO", "[$requestId] Resource created: ${rec.id} (type=${rec.type}) owners=${rec.owners}")
+                    sendJson(exchange, 201, mapOf(
+                        "id" to rec.id,
+                        "type" to rec.type,
+                        "owners" to rec.owners
+                    ))
+                }
+                "GET" -> {
+                    val list = Resources.list()
+                    val response = list.map { mapOf("id" to it.id, "type" to it.type, "owners" to it.owners) }
+                    sendJson(exchange, 200, response)
+                }
+                else -> {
+                    log("WARN", "[$requestId] Method not allowed: ${exchange.requestMethod}")
+                    sendJson(exchange, 405, mapOf("error" to "Method Not Allowed"))
+                }
+            }
+        } catch (t: Throwable) {
+            val duration = System.currentTimeMillis() - startTime
+            log("ERROR", "[$requestId] /resources failed after ${duration}ms: ${t.message}", t)
+            sendJson(exchange, 500, mapOf("error" to (t.message ?: t::class.java.simpleName)))
+        }
+    }
+
+    // Attach owner to a resource: POST /resources/{id}/owners with body { "functionId": "..." }
+    server.createContext("/resources/") { exchange ->
+        val requestId = generateRequestId()
+        val startTime = System.currentTimeMillis()
+        try {
+            val path = exchange.requestURI.path // /resources/{id}/owners
+            val parts = path.trimEnd('/').split('/')
+            if (parts.size < 4 || parts[3] != "owners") {
+                sendJson(exchange, 404, mapOf("error" to "Not Found"))
+                return@createContext
+            }
+            val resId = parts[2]
+            if (exchange.requestMethod.uppercase() != "POST") {
+                sendJson(exchange, 405, mapOf("error" to "Method Not Allowed"))
+                return@createContext
+            }
+            val body = exchange.requestBody.use { it.readAllBytes().toString(StandardCharsets.UTF_8) }
+            val json = try { Assets.gson.fromJson(body, Map::class.java) as Map<String, Any?> } catch (e: Exception) {
+                sendJson(exchange, 400, mapOf("error" to "Invalid JSON: ${e.message}")); return@createContext
+            }
+            val fnId = json["functionId"] as? String
+            if (fnId.isNullOrBlank()) { sendJson(exchange, 400, mapOf("error" to "functionId is required")); return@createContext }
+            val rec = Resources.attachOwner(resId, fnId)
+            sendJson(exchange, 200, mapOf("id" to rec.id, "type" to rec.type, "owners" to rec.owners))
+        } catch (t: Throwable) {
+            val duration = System.currentTimeMillis() - startTime
+            log("ERROR", "[$requestId] /resources/:id/owners failed after ${duration}ms: ${t.message}", t)
+            sendJson(exchange, 500, mapOf("error" to (t.message ?: t::class.java.simpleName)))
+        }
+    }
+
     return server
 }
 
@@ -252,7 +338,7 @@ private fun startServer(port: Int) {
     val boundPort = server.address.port
     log("INFO", "HTTP server successfully started on port $boundPort")
     println("HTTP server started on http://localhost:$boundPort (POST /invoke/{id}, POST /functions, GET /functions)")
-    log("INFO", "Available endpoints: /health, /invoke/{id}, /functions")
+    log("INFO", "Available endpoints: /health, /invoke/{id}, /functions, /resources, /resources/{id}/owners")
 }
 
 private var requestCounter = java.util.concurrent.atomic.AtomicLong(0)
