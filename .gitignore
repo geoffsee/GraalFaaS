@@ -81,3 +81,5 @@ cdktf.out/
 /deployment/gcp-cdktf-java/src/main/java/imports/
 .gen
 *-image.tar
+/blocklist.bin
+/blocklist_update.log

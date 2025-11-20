@@ -5,6 +5,9 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
+import java.net.InetAddress
+import java.net.URISyntaxException
+import org.graalvm.polyglot.HostAccess
 
 /**
  * A minimal host-side HTTP proxy exposed to guest languages as a "virtualized" networking API.
@@ -23,9 +26,17 @@ class VirtualNet(
      * Executes an HTTP request and returns a simple map: { status, headers, body }.
      * Body is returned as UTF-8 string. Headers are a map name -> firstValue.
      */
+    @HostAccess.Export
     fun http(method: String, url: String, body: String?, headers: Map<String, String>?): Map<String, Any?> {
         val m = method.uppercase()
-        val builder = HttpRequest.newBuilder(URI.create(url))
+        val uri = try { URI.create(url) } catch (e: IllegalArgumentException) {
+            throw IllegalArgumentException("Invalid URL: $url", e)
+        }
+
+        // Egress filter: resolve destination to IPs and deny if any are blocked; fail-closed
+        EgressFilter.enforceUri(uri)
+
+        val builder = HttpRequest.newBuilder(uri)
             .timeout(Duration.ofMillis(requestTimeoutMillis))
 
         // sanitize headers: avoid restricted ones being set by guests

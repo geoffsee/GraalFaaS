@@ -4,10 +4,16 @@ plugins {
     id("buildsrc.convention.kotlin-jvm")
     // Apply Kotlin Serialization plugin from `gradle/libs.versions.toml`.
     alias(libs.plugins.kotlinPluginSerialization)
+    application
 }
 
 dependencies {
     // Apply the kotlinx bundle of dependencies from the version catalog (`gradle/libs.versions.toml`).
     implementation(libs.bundles.kotlinxEcosystem)
     testImplementation(kotlin("test"))
+}
+
+application {
+    // CLI entrypoint for building the blocklist
+    mainClass = "ltd.gsio.utils.blocklist.BlocklistCli"
 }

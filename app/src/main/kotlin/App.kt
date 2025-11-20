@@ -11,6 +11,14 @@ import java.util.concurrent.Executors
 fun main() = main(emptyArray())
 
 fun main(args: Array<String>) {
+    // Initialize egress filter at process startup (fail-closed until valid data is loaded)
+    try {
+        EgressGuard.installProxySelector()
+        EgressFilter.ensureLoaded()
+        EgressFilter.startHotReloader()
+    } catch (_: Throwable) {
+        // EgressFilter fails closed on lookup; continue bringing the app up
+    }
     if (args.isEmpty()) {
         // Default demo behavior
         log("INFO", "Starting GraalFaaS Demo")

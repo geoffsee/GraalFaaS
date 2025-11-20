@@ -3,6 +3,7 @@ package ltd.gsio.app
 import org.graalvm.polyglot.Context
 import org.graalvm.polyglot.Value
 import org.graalvm.polyglot.Source
+import org.graalvm.polyglot.HostAccess
 
 /**
  * A minimal polyglot Function-as-a-Service (FaaS) invoker backed by GraalVM.
@@ -16,6 +17,16 @@ import org.graalvm.polyglot.Source
  *   function handler(event) { return { message: `Hello, ${event.name}!` }; }
  */
 object PolyglotFaaS {
+    init {
+        // Install global egress enforcement and start background reloader
+        try {
+            EgressGuard.installProxySelector()
+            EgressFilter.ensureLoaded()
+            EgressFilter.startHotReloader()
+        } catch (_: Throwable) {
+            // ignore; EgressFilter fails closed on lookups
+        }
+    }
     data class FileInput(
         val name: String,
         val contentType: String? = null,
@@ -101,7 +112,8 @@ object PolyglotFaaS {
     // Actual invocation logic (unchanged) executed within a worker
     private fun doInvoke(request: InvocationRequest): Any? =
         Context.newBuilder(request.languageId)
-            .allowAllAccess(true)
+            .allowAllAccess(false)
+            .allowHostAccess(HostAccess.EXPLICIT)
             .option("engine.WarnInterpreterOnly", "false") // reduce noise if JIT unavailable
             .also { builder ->
                 if (request.languageId == "js" && request.jsEvalAsModule) {
